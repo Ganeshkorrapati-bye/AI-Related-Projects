@@ -1,0 +1,33 @@
+{
+  "name": "AI API Test Generator - Error Handler",
+  "nodes": [
+    {
+      "id": "2dc77477-38cc-475e-93ff-75afa973a135",
+      "name": "On Workflow Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "id": "a33f7126-97e7-4cfd-95ca-ebf12f2eabb4",
+      "name": "Send Failure Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [224, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "REPLACE_WITH_YOUR_EMAIL@example.com",
+        "subject": "=[n8n] Workflow failed: {{ $json.workflow.name }}",
+        "emailType": "html",
+        "message": "=<h2>Workflow Execution Failed</h2><p><strong>Workflow:</strong> {{ $json.workflow.name }} ({{ $json.workflow.id }})</p><p><strong>Execution ID:</strong> {{ $json.execution.id }}</p><p><strong>Failed node:</strong> {{ $json.execution.lastNodeExecuted }}</p><p><strong>Error:</strong> {{ $json.execution.error.message }}</p><p><strong>Time:</strong> {{ $now.toISO() }}</p>",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "On Workflow Error": { "main": [[{ "node": "Send Failure Alert", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}
