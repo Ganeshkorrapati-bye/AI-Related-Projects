@@ -1,0 +1,98 @@
+{
+  "name": "AI API Test Generator",
+  "nodes": [
+    {
+      "id": "cf76fffe-3795-4435-8bd0-b618797174d0",
+      "name": "Submit API Spec",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [0, 96],
+      "parameters": {
+        "formTitle": "AI API Test Generator",
+        "formDescription": "Paste an OpenAPI 3.x or Swagger 2.0 specification (JSON) and choose the target frameworks. The generator produces enterprise-grade API test cases.",
+        "responseMode": "lastNode",
+        "formFields": {
+          "values": [
+            { "fieldLabel": "OpenAPI or Swagger Spec (JSON)", "fieldType": "textarea", "placeholder": "{ \"openapi\": \"3.0.0\", \"info\": { ... }, \"paths\": { ... } }", "requiredField": true },
+            { "fieldLabel": "Target Frameworks", "fieldType": "dropdown", "multiselect": true, "requiredField": true, "fieldOptions": { "values": [ { "option": "REST Assured (Java)" }, { "option": "Playwright API (TypeScript)" }, { "option": "Python Requests + pytest" }, { "option": "Postman Collection" }, { "option": "JSON Schema Validation" } ] } },
+            { "fieldLabel": "Base URL (optional)", "fieldType": "text", "placeholder": "https://api.example.com", "requiredField": false }
+          ]
+        },
+        "options": { "buttonLabel": "Generate Tests", "path": "api-test-generator" }
+      },
+      "webhookId": "1e219194-7c36-4eb4-8829-d6a920423dad"
+    },
+    {
+      "id": "ded81ffb-96b8-4940-b25d-0f67e056dcf4",
+      "name": "Validate & Parse Spec",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 96],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const item = $input.first().json;\n\nconst raw = item['OpenAPI or Swagger Spec (JSON)'] || '';\nconst frameworks = item['Target Frameworks'] || '';\nconst baseUrl = (item['Base URL (optional)'] || '').trim();\n\nlet valid = true;\nlet error = '';\nlet spec = null;\n\nif (!raw || String(raw).trim().length === 0) {\n  valid = false;\n  error = 'No specification was provided. Please paste a valid OpenAPI/Swagger JSON document.';\n}\n\nif (valid) {\n  try {\n    spec = typeof raw === 'string' ? JSON.parse(raw) : raw;\n  } catch (e) {\n    valid = false;\n    error = 'The specification is not valid JSON: ' + e.message;\n  }\n}\n\nif (valid && (!spec || (!spec.openapi && !spec.swagger))) {\n  valid = false;\n  error = 'Missing \"openapi\" or \"swagger\" version field. This does not look like an OpenAPI/Swagger document.';\n}\n\nif (valid && (!spec.paths || typeof spec.paths !== 'object')) {\n  valid = false;\n  error = 'No \"paths\" object found in the specification.';\n}\n\nconst endpoints = [];\nconst httpMethods = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'];\nif (valid) {\n  for (const path of Object.keys(spec.paths)) {\n    const ops = spec.paths[path] || {};\n    for (const method of Object.keys(ops)) {\n      if (httpMethods.includes(method.toLowerCase())) {\n        const op = ops[method] || {};\n        endpoints.push({ method: method.toUpperCase(), path: path, summary: op.summary || op.description || '', operationId: op.operationId || '' });\n      }\n    }\n  }\n  if (endpoints.length === 0) {\n    valid = false;\n    error = 'No valid HTTP operations were found under \"paths\".';\n  }\n}\n\nreturn [{ json: { valid, error, endpoints, endpointCount: endpoints.length, frameworks, baseUrl, specTitle: (spec && spec.info && spec.info.title) || 'API', specVersion: (spec && spec.info && spec.info.version) || 'n/a' } }];"
+      }
+    },
+    {
+      "id": "f499f005-6cd9-40f7-938f-d3aa59ad324b",
+      "name": "Is Spec Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [448, 96],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+          "conditions": [ { "id": "valid-check", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } } ]
+        }
+      }
+    },
+    {
+      "id": "acbbbd9d-342b-4b91-9330-1044a5c661eb",
+      "name": "Generate Test Cases",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [672, 0],
+      "parameters": {
+        "resource": "text",
+        "operation": "response",
+        "modelId": { "__rl": true, "mode": "id", "value": "gpt-4o-mini" },
+        "simplify": true,
+        "responses": { "values": [ { "type": "text", "role": "user", "content": "=Generate comprehensive, production-grade API test cases and return a single JSON object.\n\nAPI: {{ $json.specTitle }} (version {{ $json.specVersion }})\nBase URL: {{ $json.baseUrl || \"not provided\" }}\nRequested frameworks: {{ $json.frameworks }}\nEndpoints ({{ $json.endpointCount }}):\n{{ $json.endpoints.map(e => \"- \" + e.method + \" \" + e.path + (e.summary ? \" — \" + e.summary : \"\")).join(\"\\n\") }}\n\nReturn a JSON object with these keys (include a key ONLY if its framework is in the requested list, otherwise set it to an empty string):\n- \"summary\": a short overview of the generated test strategy and coverage\n- \"rest_assured\": complete REST Assured (Java) test class(es) covering happy paths, negative cases, status codes and schema assertions\n- \"playwright\": complete Playwright API (TypeScript) test spec\n- \"python_requests\": complete Python Requests + pytest test module\n- \"postman_collection\": a valid Postman Collection v2.1 JSON string\n- \"json_schema\": JSON Schema validation snippets for the key responses\n\nCover positive, negative, boundary and authorization scenarios where applicable. Respond with valid json only." } ] },
+        "options": { "instructions": "You are a Senior SDET with 15+ years of enterprise API testing experience. You produce clean, idiomatic, runnable test code following best practices for each framework. Always respond with a single valid JSON object and nothing else.", "maxTokens": 6000, "temperature": 0.2, "textFormat": { "textOptions": { "type": "json_object" } } }
+      }
+    },
+    {
+      "id": "c429a375-e7a7-49b3-a0de-70a96dfab97c",
+      "name": "Assemble Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [896, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const ai = $input.first().json;\n\nlet content;\ntry {\n  content = ai.output[0].content[0].text;\n} catch (e) {\n  content = ai.text || ai;\n}\n\nlet generated;\nif (content && typeof content === 'object') {\n  generated = content;\n} else {\n  const str = typeof content === 'string' ? content : JSON.stringify(content);\n  try {\n    generated = JSON.parse(str);\n  } catch (e) {\n    generated = { summary: 'Raw model output (could not parse as JSON).', raw: str };\n  }\n}\n\nconst meta = $('Validate & Parse Spec').first().json;\n\nreturn [{ json: { status: 'success', api: meta.specTitle, version: meta.specVersion, endpointCount: meta.endpointCount, frameworks: meta.frameworks, endpoints: meta.endpoints, tests: generated, generatedAt: new Date().toISOString() } }];"
+      }
+    },
+    {
+      "id": "7ecad1ca-f0d4-446f-adfa-5a30760bce78",
+      "name": "Build Error Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [672, 192],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const meta = $input.first().json;\nreturn [{ json: { status: 'error', message: meta.error || 'The submitted specification could not be processed.', hint: 'Ensure you pasted a valid OpenAPI 3.x or Swagger 2.0 JSON document with a non-empty \"paths\" object.', endpointCount: 0 } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Submit API Spec": { "main": [[{ "node": "Validate & Parse Spec", "type": "main", "index": 0 }]] },
+    "Validate & Parse Spec": { "main": [[{ "node": "Is Spec Valid?", "type": "main", "index": 0 }]] },
+    "Is Spec Valid?": { "main": [[{ "node": "Generate Test Cases", "type": "main", "index": 0 }], [{ "node": "Build Error Response", "type": "main", "index": 0 }]] },
+    "Generate Test Cases": { "main": [[{ "node": "Assemble Result", "type": "main", "index": 0 }]] }
+  },
+  "settings": {}
+}
